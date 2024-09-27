@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 from typing import Type
@@ -5,6 +6,7 @@ from typing import Type
 from termcolor import colored
 
 import agenthub  # noqa F401 (we import this to get the agents registered)
+from openhands import __version__
 from openhands.controller import AgentController
 from openhands.controller.agent import Agent
 from openhands.core.config import (
@@ -61,8 +63,33 @@ def display_event(event: Event):
         display_command_output(event.content)
 
 
+def get_parser() -> argparse.ArgumentParser:
+    """Get the parser for the command line arguments."""
+    parser = argparse.ArgumentParser(description='Run an agent with a specific task')
+
+    # Add the version argument
+    parser.add_argument(
+        '-v',
+        '--version',
+        action='version',
+        version=f'{__version__}',
+        help='Show the version number and exit',
+        default=None,
+    )
+
+    return parser
+
+
 async def main():
     """Runs the agent in CLI mode"""
+
+    parser = get_parser()
+    args = parser.parse_args()
+
+    if args.version:
+        print(f'OpenHands version: {__version__}')
+        return
+
     logger.setLevel(logging.WARNING)
     config = load_app_config()
     sid = 'cli'
@@ -93,6 +120,9 @@ async def main():
         agent_to_llm_config=config.get_agent_to_llm_config_map(),
         event_stream=event_stream,
     )
+
+    if controller is not None:
+        controller.agent_task = asyncio.create_task(controller.start_step_loop())
 
     async def prompt_for_next_task():
         next_message = input('How can I help? >> ')

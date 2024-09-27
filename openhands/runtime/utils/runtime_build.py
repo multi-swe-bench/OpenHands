@@ -1,34 +1,22 @@
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
 import tempfile
 
 import docker
-import toml
 from dirhash import dirhash
 from jinja2 import Environment, FileSystemLoader
 
 import openhands
+from openhands import __version__ as oh_version
 from openhands.core.logger import openhands_logger as logger
 from openhands.runtime.builder import DockerRuntimeBuilder, RuntimeBuilder
 
 
 def get_runtime_image_repo():
-    return os.getenv('OD_RUNTIME_RUNTIME_IMAGE_REPO', 'ghcr.io/all-hands-ai/runtime')
-
-
-def _get_package_version():
-    """Read the version from pyproject.toml.
-
-    Returns:
-    - The version specified in pyproject.toml under [tool.poetry]
-    """
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(openhands.__file__)))
-    pyproject_path = os.path.join(project_root, 'pyproject.toml')
-    with open(pyproject_path, 'r') as f:
-        pyproject_data = toml.load(f)
-    return pyproject_data['tool']['poetry']['version']
+    return os.getenv('OH_RUNTIME_RUNTIME_IMAGE_REPO', 'ghcr.io/all-hands-ai/runtime')
 
 
 def _put_source_code_to_dir(temp_dir: str):
@@ -38,11 +26,14 @@ def _put_source_code_to_dir(temp_dir: str):
     Parameters:
     - temp_dir (str): The directory to put the source code in
     """
+    if not os.path.isdir(temp_dir):
+        raise RuntimeError(f'Temp directory {temp_dir} does not exist')
+
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(openhands.__file__)))
-    logger.info(f'Using project root: {project_root}')
+    logger.info(f'Building source distribution using project root: {project_root}')
 
     # Fetch the correct version from pyproject.toml
-    package_version = _get_package_version()
+    package_version = oh_version
     tarball_filename = f'openhands_ai-{package_version}.tar.gz'
     tarball_path = os.path.join(temp_dir, tarball_filename)
 
@@ -51,7 +42,7 @@ def _put_source_code_to_dir(temp_dir: str):
         ' ', r'\ '
     )  # escape spaces in the project root
     result = subprocess.run(
-        f'python -m build -s -o {temp_dir} {_cleaned_project_root}',
+        f'python -m build -s -o "{temp_dir}" {_cleaned_project_root}',
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -62,12 +53,12 @@ def _put_source_code_to_dir(temp_dir: str):
         logger.error(err_logs)
 
     if result.returncode != 0:
-        logger.error(f'Build failed: {result}')
-        raise Exception(f'Build failed: {result}')
+        logger.error(f'Image build failed:\n{result}')
+        raise RuntimeError(f'Image build failed:\n{result}')
 
     if not os.path.exists(tarball_path):
         logger.error(f'Source distribution not found at {tarball_path}')
-        raise Exception(f'Source distribution not found at {tarball_path}')
+        raise RuntimeError(f'Source distribution not found at {tarball_path}')
     logger.info(f'Source distribution created at {tarball_path}')
 
     # Unzip the tarball
@@ -138,25 +129,26 @@ def prep_docker_build_folder(
         skip_init=skip_init,
         extra_deps=extra_deps,
     )
-    logger.debug(
-        (
-            f'===== Dockerfile content start =====\n'
-            f'{dockerfile_content}\n'
-            f'===== Dockerfile content end ====='
+    if os.getenv('SKIP_CONTAINER_LOGS', 'false') != 'true':
+        logger.debug(
+            (
+                f'===== Dockerfile content start =====\n'
+                f'{dockerfile_content}\n'
+                f'===== Dockerfile content end ====='
+            )
         )
-    )
     with open(os.path.join(dir_path, 'Dockerfile'), 'w') as file:
         file.write(dockerfile_content)
 
     # Get the MD5 hash of the dir_path directory
-    hash = dirhash(dir_path, 'md5')
+    dist_hash = dirhash(dir_path, 'md5')
     logger.info(
         f'Input base image: {base_image}\n'
         f'Skip init: {skip_init}\n'
         f'Extra deps: {extra_deps}\n'
-        f'Hash for docker build directory [{dir_path}] (contents: {os.listdir(dir_path)}): {hash}\n'
+        f'Hash for docker build directory [{dir_path}] (contents: {os.listdir(dir_path)}): {dist_hash}\n'
     )
-    return hash
+    return dist_hash
 
 
 def get_runtime_image_repo_and_tag(base_image: str) -> tuple[str, str]:
@@ -183,11 +175,24 @@ def get_runtime_image_repo_and_tag(base_image: str) -> tuple[str, str]:
         if ':' not in base_image:
             base_image = base_image + ':latest'
         [repo, tag] = base_image.split(':')
-        # replace '/' with '_s_' to avoid '/' in the image name
-        # while make it a valid docker image name
-        repo = repo.replace('/', '_s_')
-        od_version = _get_package_version()
-        return get_runtime_image_repo(), f'od_v{od_version}_image_{repo}_tag_{tag}'
+
+        # Hash the repo if it's too long
+        if len(repo) > 32:
+            repo_hash = hashlib.md5(repo[:-24].encode()).hexdigest()[:8]
+            repo = f'{repo_hash}_{repo[-24:]}'  # Use 8 char hash + last 24 chars
+        else:
+            repo = repo.replace('/', '_s_')
+
+        new_tag = f'oh_v{oh_version}_image_{repo}_tag_{tag}'
+
+        # if it's still too long, hash the entire image name
+        if len(new_tag) > 128:
+            new_tag = f'oh_v{oh_version}_image_{hashlib.md5(new_tag.encode()).hexdigest()[:64]}'
+            logger.warning(
+                f'The new tag [{new_tag}] is still too long, so we use an hash of the entire image name: {new_tag}'
+            )
+
+        return get_runtime_image_repo(), new_tag
 
 
 def build_runtime_image(
@@ -346,19 +351,25 @@ def _build_sandbox_image(
         on the contents of the docker build folder (source code and Dockerfile)
         e.g. 1234567890abcdef
     -target_image_tag (str): the tag for the target image that's generic and based on the base image name
-        e.g. od_v0.8.3_image_ubuntu_tag_22.04
+        e.g. oh_v0.9.3_image_ubuntu_tag_22.04
     """
     target_image_hash_name = f'{target_image_repo}:{target_image_hash_tag}'
     target_image_generic_name = f'{target_image_repo}:{target_image_tag}'
 
+    tags_to_add = [target_image_hash_name]
+
+    # Only add the generic tag if the image does not exist
+    # so it does not get overwritten & only points to the earliest version
+    # to avoid "too many layers" after many re-builds
+    if not runtime_builder.image_exists(target_image_generic_name):
+        tags_to_add.append(target_image_generic_name)
+
     try:
-        image_name = runtime_builder.build(
-            path=docker_folder, tags=[target_image_hash_name, target_image_generic_name]
-        )
+        image_name = runtime_builder.build(path=docker_folder, tags=tags_to_add)
         if not image_name:
             raise RuntimeError(f'Build failed for image {target_image_hash_name}')
     except Exception as e:
-        logger.error(f'Sandbox image build failed: {e}')
+        logger.error(f'Sandbox image build failed: {str(e)}')
         raise
 
     return image_name

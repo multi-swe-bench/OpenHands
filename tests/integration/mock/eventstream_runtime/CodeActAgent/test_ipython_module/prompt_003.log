@@ -116,7 +116,6 @@ append_file(file_name: str, content: str) -> None:
     It appends text `content` to the end of the specified file, ideal after a `create_file`!
     Args:
     file_name: str: The name of the file to edit.
-    line_number: int: The line number (starting from 1) to insert the content after.
     content: str: The content to insert.
 
 search_dir(search_term: str, dir_path: str = './') -> None:
@@ -400,11 +399,7 @@ The server is running on port 5000 with PID 126. You can access the list of numb
 
 
 
-NOW, LET'S START!
-
-----------
-
-Install and import pymsgbox==1.0.9 and print it's version in /workspace/test.txt. Do not ask me for confirmation at any point.
+NOW, LET'S START!Install and import pymsgbox==1.0.9 and print it's version in /workspace/test.txt. Do not ask me for confirmation at any point.
 
 ----------
 
@@ -454,8 +449,6 @@ OBSERVATION:
 [Jupyter current working directory: /workspace]
 [Jupyter Python interpreter: /openhands/poetry/openhands-ai-5O4_aCHf-py3.11/bin/python]
 
+ENVIRONMENT REMINDER: You have 17 turns left to complete the task. When finished reply with <finish></finish>.
+
 ----------
-
-
-
-ENVIRONMENT REMINDER: You have 12 turns left to complete the task. When finished reply with <finish></finish>.

@@ -33,9 +33,15 @@ if [ -z "$USE_INSTANCE_IMAGE" ]; then
   USE_INSTANCE_IMAGE=true
 fi
 
-if [ -z "$SUBSET" ]; then
-  echo "SUBSET not specified, use default lite-test"
-  SUBSET="lite-test"
+
+if [ -z "$DATASET" ]; then
+  echo "DATASET not specified, use default princeton-nlp/SWE-bench_Lite"
+  DATASET="princeton-nlp/SWE-bench_Lite"
+fi
+
+if [ -z "$SPLIT" ]; then
+  echo "SPLIT not specified, use default test"
+  SPLIT="test"
 fi
 
 export USE_INSTANCE_IMAGE=$USE_INSTANCE_IMAGE
@@ -46,6 +52,8 @@ get_agent_version
 echo "AGENT: $AGENT"
 echo "AGENT_VERSION: $AGENT_VERSION"
 echo "MODEL_CONFIG: $MODEL_CONFIG"
+echo "DATASET: $DATASET"
+echo "SPLIT: $SPLIT"
 
 # Default to NOT use Hint
 if [ -z "$USE_HINT_TEXT" ]; then
@@ -57,6 +65,11 @@ EVAL_NOTE="$AGENT_VERSION"
 if [ "$USE_HINT_TEXT" = false ]; then
   EVAL_NOTE="$EVAL_NOTE-no-hint"
 fi
+
+if [ -n "$EXP_NAME" ]; then
+  EVAL_NOTE="$EVAL_NOTE-$EXP_NAME"
+fi
+echo "EVAL_NOTE: $EVAL_NOTE"
 
 unset SANDBOX_ENV_GITHUB_TOKEN # prevent the agent from using the github token to push
 

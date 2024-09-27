@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import tempfile
+import uuid
 
 if __package__ is None or __package__ == '':
     from aider import Linter
@@ -456,7 +457,6 @@ def _edit_file_impl(
     # Use a temporary file to write changes
     content = str(content or '')
     temp_file_path = ''
-    src_abs_path = os.path.abspath(file_name)
     first_error_line = None
 
     try:
@@ -471,10 +471,13 @@ def _edit_file_impl(
                 shutil.copy2(file_name, orig_file_clone.name)
                 original_lint_error, _ = _lint_file(orig_file_clone.name)
 
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile('w', delete=False) as temp_file:
-            temp_file_path = temp_file.name
+        # Create a temporary file in the same directory as the original file
+        original_dir = os.path.dirname(file_name)
+        original_ext = os.path.splitext(file_name)[1]
+        temp_file_name = f'.temp_{uuid.uuid4().hex}{original_ext}'
+        temp_file_path = os.path.join(original_dir, temp_file_name)
 
+        with open(temp_file_path, 'w') as temp_file:
             # Read the original file and check if empty and for a trailing newline
             with open(file_name) as original_file:
                 lines = original_file.readlines()
@@ -500,18 +503,18 @@ def _edit_file_impl(
             # Write the new content to the temporary file
             temp_file.write(content)
 
-        # Replace the original file with the temporary file atomically
-        shutil.move(temp_file_path, src_abs_path)
+        # Replace the original file with the temporary file
+        os.replace(temp_file_path, file_name)
 
         # Handle linting
         # NOTE: we need to get env var inside this function
         # because the env var will be set AFTER the agentskills is imported
         if enable_auto_lint:
-            # BACKUP the original file
-            original_file_backup_path = os.path.join(
-                os.path.dirname(file_name),
-                f'.backup.{os.path.basename(file_name)}',
-            )
+            # Generate a random temporary file path
+            suffix = os.path.splitext(file_name)[1]
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
+                original_file_backup_path = tfile.name
+
             with open(original_file_backup_path, 'w') as f:
                 f.writelines(lines)
 
@@ -594,11 +597,15 @@ def _edit_file_impl(
                     file_name, 'w'
                 ) as fout:
                     fout.write(fin.read())
-                os.remove(original_file_backup_path)
+
+                # Don't forget to remove the temporary file after you're done
+                os.unlink(original_file_backup_path)
                 return ret_str
 
     except FileNotFoundError as e:
         ret_str += f'File not found: {e}\n'
+    except PermissionError as e:
+        ret_str += f'Permission error during file operation: {str(e)}\n'
     except IOError as e:
         ret_str += f'An error occurred while handling the file: {e}\n'
     except ValueError as e:
@@ -779,7 +786,6 @@ def append_file(file_name: str, content: str) -> None:
 
     Args:
         file_name: str: The name of the file to edit.
-        line_number: int: The line number (starting from 1) to insert the content after.
         content: str: The content to insert.
     """
     ret_str = _edit_file_impl(

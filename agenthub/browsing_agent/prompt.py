@@ -57,7 +57,7 @@ class Flags:
 
     @classmethod
     def from_dict(self, flags_dict):
-        """Helper for JSON serializble requirement."""
+        """Helper for JSON serializable requirement."""
         if isinstance(flags_dict, Flags):
             return flags_dict
 
@@ -354,7 +354,7 @@ and executed by a program, make sure to follow the formatting instructions.
         self._prompt += '\n'.join(
             [
                 f"""\
- - [{msg['role']}] {msg['message']}"""
+ - [{msg['role']}], {msg['message']}"""
                 for msg in chat_messages
             ]
         )
